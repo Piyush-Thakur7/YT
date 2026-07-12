@@ -245,6 +245,10 @@ async function main() {
             4. Emotional expression and action (e.g., "looking shocked", "slamming the folder onto the desk").
           - Each scene must have dialogue or a voiceover cue (synced to that scene).
           
+          CRITICAL FORMATTING RULES:
+          - Any double quotes inside string fields (like "dialogueOrVoiceover" or "veoPrompt") MUST be properly escaped with a backslash (e.g. \\"dialogue\\").
+          - Do not use unescaped double quotes inside string values.
+          
           Return a JSON object conforming exactly to this schema:
           {
             "episodeNumber": ${i},
@@ -262,9 +266,20 @@ async function main() {
           }
         `;
         
-        const result = await model.generateContent(epPrompt);
-        const text = result.response.text();
-        episodeScript = cleanAndParseJSON(text);
+        let attempts = 0;
+        const maxAttempts = 3;
+        while (attempts < maxAttempts) {
+          try {
+            const result = await model.generateContent(epPrompt);
+            const text = result.response.text();
+            episodeScript = cleanAndParseJSON(text);
+            break;
+          } catch (e) {
+            attempts++;
+            console.warn(`⚠️ Attempt ${attempts}/${maxAttempts} failed to parse JSON for Episode ${i}: ${e.message}`);
+            if (attempts >= maxAttempts) throw e;
+          }
+        }
       } else {
         episodeScript = generateMockEpisode(i, bible);
       }
