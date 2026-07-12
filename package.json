@@ -8,7 +8,8 @@
     "generate": "node src/generator.js",
     "assemble": "node src/assembler.js",
     "upload": "node src/uploader.js",
-    "status": "node src/db.js status"
+    "status": "node src/db.js status",
+    "verify": "node src/verify.js"
   },
   "dependencies": {
     "@google/generative-ai": "^0.21.0",
