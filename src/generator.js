@@ -3,6 +3,28 @@ import path from 'path';
 import dotenv from 'dotenv';
 import { GoogleGenerativeAI } from '@google/generative-ai';
 
+// Resilient JSON parser to handle markdown wrapping or trailing characters
+function cleanAndParseJSON(text) {
+  let cleaned = text.trim();
+  
+  // Strip markdown code block wrappers if present
+  if (cleaned.startsWith('```')) {
+    cleaned = cleaned.replace(/^```(json)?/, '').replace(/```$/, '').trim();
+  }
+  
+  // Find the boundaries of the first JSON object
+  const firstBrace = cleaned.indexOf('{');
+  const lastBrace = cleaned.lastIndexOf('}');
+  
+  if (firstBrace === -1 || lastBrace === -1 || lastBrace < firstBrace) {
+    throw new Error('Could not find valid JSON object boundaries in response: ' + text.slice(0, 100) + '...');
+  }
+  
+  cleaned = cleaned.substring(firstBrace, lastBrace + 1);
+  return JSON.parse(cleaned);
+}
+
+
 // Load environment variables
 dotenv.config();
 
@@ -44,9 +66,9 @@ function getGeminiModel() {
     return null;
   }
   const genAI = new GoogleGenerativeAI(apiKey);
-  // Using gemini-1.5-flash for fast and high-quality structured generation
+  // Using gemini-3.5-flash for fast and high-quality structured generation
   return genAI.getGenerativeModel({
-    model: 'gemini-1.5-flash',
+    model: 'gemini-3.5-flash',
     generationConfig: {
       responseMimeType: 'application/json',
     }
@@ -114,8 +136,13 @@ async function main() {
     const model = getGeminiModel();
     
     let bible;
+    const biblePath = path.join(EPISODES_DIR, 'story_bible.json');
     
-    if (model) {
+    if (fs.existsSync(biblePath)) {
+      console.log('📖 Loading existing Story Bible from disk...');
+      bible = JSON.parse(fs.readFileSync(biblePath, 'utf8'));
+      console.log(`✅ Loaded Story Bible: "${bible.title}"`);
+    } else if (model) {
       console.log('🔮 Generating Story Bible with Gemini API...');
       const biblePrompt = `
         You are an expert short-drama screenwriter. Generate a high-level story bible/outline for a vertical short-drama series (e.g. ReelShort style).
@@ -150,19 +177,44 @@ async function main() {
       
       const result = await model.generateContent(biblePrompt);
       const text = result.response.text();
-      bible = JSON.parse(text);
+      bible = cleanAndParseJSON(text);
       console.log(`✅ Story Bible Generated: "${bible.title}"`);
+      fs.writeFileSync(biblePath, JSON.stringify(bible, null, 2), 'utf8');
     } else {
       bible = generateMockStoryBible(config);
       console.log(`✅ Generated MOCK Story Bible: "${bible.title}"`);
+      fs.writeFileSync(biblePath, JSON.stringify(bible, null, 2), 'utf8');
     }
-    
-    // Save Story Bible to file
-    const biblePath = path.join(EPISODES_DIR, 'story_bible.json');
-    fs.writeFileSync(biblePath, JSON.stringify(bible, null, 2), 'utf8');
     
     // Generate each episode script
     for (let i = 1; i <= config.episodesCount; i++) {
+      const epFolder = path.join(EPISODES_DIR, `ep${String(i).padStart(2, '0')}`);
+      const scriptFile = path.join(epFolder, 'script.json');
+      const promptsFile = path.join(epFolder, 'veo_prompts.txt');
+      
+      // Resumable script check: Skip if already exists
+      if (fs.existsSync(scriptFile) && fs.existsSync(promptsFile)) {
+        console.log(`⏭️  Episode ${i} already exists. Skipping script generation.`);
+        
+        // Sync database entry just in case
+        const episodeScript = JSON.parse(fs.readFileSync(scriptFile, 'utf8'));
+        const existingEpIdx = db.episodes.findIndex(e => e.episodeNumber === i);
+        const epDbEntry = {
+          episodeNumber: i,
+          title: episodeScript.title,
+          status: db.episodes[existingEpIdx]?.status || 'GENERATED',
+          cliffhanger: episodeScript.cliffhanger,
+          totalScenes: episodeScript.scenes.length,
+          createdAt: db.episodes[existingEpIdx]?.createdAt || new Date().toISOString()
+        };
+        if (existingEpIdx > -1) {
+          db.episodes[existingEpIdx] = { ...db.episodes[existingEpIdx], ...epDbEntry };
+        } else {
+          db.episodes.push(epDbEntry);
+        }
+        continue;
+      }
+
       console.log(`🎬 Generating Script for Episode ${i}/${config.episodesCount}...`);
       let episodeScript;
       
@@ -211,13 +263,13 @@ async function main() {
         `;
         
         const result = await model.generateContent(epPrompt);
-        episodeScript = JSON.parse(result.response.text());
+        const text = result.response.text();
+        episodeScript = cleanAndParseJSON(text);
       } else {
         episodeScript = generateMockEpisode(i, bible);
       }
       
       // Create folder for the episode
-      const epFolder = path.join(EPISODES_DIR, `ep${String(i).padStart(2, '0')}`);
       if (!fs.existsSync(epFolder)) {
         fs.mkdirSync(epFolder, { recursive: true });
       }
