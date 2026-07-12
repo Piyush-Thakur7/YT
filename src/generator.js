@@ -44,9 +44,9 @@ function getGeminiModel() {
     return null;
   }
   const genAI = new GoogleGenerativeAI(apiKey);
-  // Using gemini-2.5-flash for fast and high-quality structured generation
+  // Using gemini-1.5-flash for fast and high-quality structured generation
   return genAI.getGenerativeModel({
-    model: 'gemini-2.5-flash',
+    model: 'gemini-1.5-flash',
     generationConfig: {
       responseMimeType: 'application/json',
     }
