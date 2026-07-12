@@ -136,7 +136,7 @@ async function main() {
   try {
     const config = loadConfig();
     const db = loadDatabase();
-    const model = getGeminiModel();
+    let model = getGeminiModel();
     
     let bible;
     const biblePath = path.join(EPISODES_DIR, 'story_bible.json');
