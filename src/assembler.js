@@ -116,20 +116,30 @@ function createBumper(text, duration, outputPath, width, height, rFrameRate, fon
   }
 }
 
-// Normalize a clip to target specs (video scale/pad, audio track addition/normalization)
-function normalizeClip(inputPath, outputPath, width, height, rFrameRate) {
+// Normalize a clip to target specs (video scale/pad, audio track addition/normalization/voiceover merge)
+function normalizeClip(inputPath, outputPath, width, height, rFrameRate, voiceoverPath = null) {
   const hasAudio = hasAudioStream(inputPath);
   
   // standard visual scale/pad to keep vertical layout
   const videoFilter = `scale=${width}:${height}:force_original_aspect_ratio=decrease,pad=${width}:${height}:(ow-iw)/2:(oh-ih)/2,setsar=1`;
   
   let cmd;
-  if (hasAudio) {
-    // Scale video and copy/encode audio
-    cmd = `ffmpeg -y -i "${inputPath}" -vf "${videoFilter}" -c:v libx264 -r ${rFrameRate} -pix_fmt yuv420p -c:a aac -ar 44100 -ac 2 "${outputPath}"`;
+  if (voiceoverPath && fs.existsSync(voiceoverPath)) {
+    if (hasAudio) {
+      // Scale video, mix original audio with voiceover
+      cmd = `ffmpeg -y -i "${inputPath}" -i "${voiceoverPath}" -filter_complex "[0:v]${videoFilter}[v]; [0:a][1:a]amix=inputs=2:duration=first:dropout_transition=2[a]" -map "[v]" -map "[a]" -c:v libx264 -r ${rFrameRate} -pix_fmt yuv420p -c:a aac -ar 44100 -ac 2 -shortest "${outputPath}"`;
+    } else {
+      // Scale video, map voiceover directly as the audio stream
+      cmd = `ffmpeg -y -i "${inputPath}" -i "${voiceoverPath}" -filter_complex "[0:v]${videoFilter}[v]" -map "[v]" -map 1:a -c:v libx264 -r ${rFrameRate} -pix_fmt yuv420p -c:a aac -ar 44100 -ac 2 -shortest "${outputPath}"`;
+    }
   } else {
-    // Scale video and add silent audio track
-    cmd = `ffmpeg -y -i "${inputPath}" -f lavfi -i anullsrc=cl=stereo:r=44100 -vf "${videoFilter}" -c:v libx264 -r ${rFrameRate} -pix_fmt yuv420p -c:a aac -ar 44100 -ac 2 -shortest "${outputPath}"`;
+    if (hasAudio) {
+      // Scale video and copy/encode audio
+      cmd = `ffmpeg -y -i "${inputPath}" -vf "${videoFilter}" -c:v libx264 -r ${rFrameRate} -pix_fmt yuv420p -c:a aac -ar 44100 -ac 2 "${outputPath}"`;
+    } else {
+      // Scale video and add silent audio track
+      cmd = `ffmpeg -y -i "${inputPath}" -f lavfi -i anullsrc=cl=stereo:r=44100 -vf "${videoFilter}" -c:v libx264 -r ${rFrameRate} -pix_fmt yuv420p -c:a aac -ar 44100 -ac 2 -shortest "${outputPath}"`;
+    }
   }
   
   execSync(cmd, { stdio: 'ignore' });
@@ -201,7 +211,31 @@ async function assembleEpisode(epNum) {
   for (let s = 0; s < sceneFiles.length; s++) {
     const scenePath = sceneFiles[s];
     const normalizedPath = path.join(tempDir, `norm_scene_${String(s + 1).padStart(2, '0')}.mp4`);
-    normalizeClip(scenePath, normalizedPath, targetSpecs.width, targetSpecs.height, targetSpecs.rFrameRate);
+    
+    // Check for matching voiceover file (e.g. scene_01_voice.mp3 or scene_01.mp3)
+    const baseName = path.basename(scenePath, path.extname(scenePath));
+    const epDir = path.dirname(scenePath);
+    const possibleVoiceFiles = [
+      `${baseName}_voice.mp3`,
+      `${baseName}_voice.wav`,
+      `${baseName}.mp3`,
+      `${baseName}.wav`
+    ];
+    
+    let voiceoverPath = null;
+    for (const f of possibleVoiceFiles) {
+      const fullP = path.join(epDir, f);
+      if (fs.existsSync(fullP)) {
+        voiceoverPath = fullP;
+        break;
+      }
+    }
+    
+    if (voiceoverPath) {
+      console.log(`🎤 Found voiceover track: ${path.basename(voiceoverPath)}`);
+    }
+    
+    normalizeClip(scenePath, normalizedPath, targetSpecs.width, targetSpecs.height, targetSpecs.rFrameRate, voiceoverPath);
     normalizedClips.push(normalizedPath);
   }
   normalizedClips.push(outroBumperPath);
