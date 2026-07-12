@@ -3,6 +3,7 @@ import path from 'path';
 import os from 'os';
 import { execSync } from 'child_process';
 import dotenv from 'dotenv';
+import { generateTTS } from './tts.js';
 
 dotenv.config();
 
@@ -215,6 +216,7 @@ async function assembleEpisode(epNum) {
     // Check for matching voiceover file (e.g. scene_01_voice.mp3 or scene_01.mp3)
     const baseName = path.basename(scenePath, path.extname(scenePath));
     const epDir = path.dirname(scenePath);
+    const sceneScript = script.scenes[s];
     const possibleVoiceFiles = [
       `${baseName}_voice.mp3`,
       `${baseName}_voice.wav`,
@@ -232,7 +234,29 @@ async function assembleEpisode(epNum) {
     }
     
     if (voiceoverPath) {
-      console.log(`🎤 Found voiceover track: ${path.basename(voiceoverPath)}`);
+      console.log(`🎤 Found manual voiceover track: ${path.basename(voiceoverPath)}`);
+    } else if (sceneScript && sceneScript.dialogueOrVoiceover) {
+      // Auto-generate Voiceover using local SAPI TTS if no manual file exists
+      const voiceText = sceneScript.dialogueOrVoiceover;
+      let gender = 'Male';
+      
+      // Basic gender detection based on Chinese or English names
+      const dialogueLower = voiceText.toLowerCase();
+      if (dialogueLower.startsWith('chloe') || 
+          dialogueLower.startsWith('serena') || 
+          dialogueLower.startsWith('ye ruo') || 
+          dialogueLower.startsWith('mother') || 
+          dialogueLower.startsWith('woman') ||
+          dialogueLower.startsWith('girl')) {
+        gender = 'Female';
+      }
+      
+      const autoVoicePath = path.join(tempDir, `auto_voice_${String(s + 1).padStart(2, '0')}.wav`);
+      console.log(`🎤 Auto-synthesizing voiceover for Scene ${s + 1} (${gender} voice)...`);
+      const generated = generateTTS(voiceText, autoVoicePath, gender);
+      if (generated) {
+        voiceoverPath = autoVoicePath;
+      }
     }
     
     normalizeClip(scenePath, normalizedPath, targetSpecs.width, targetSpecs.height, targetSpecs.rFrameRate, voiceoverPath);
