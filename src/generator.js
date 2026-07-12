@@ -61,7 +61,7 @@ function saveDatabase(db) {
 }
 
 // Initialize Gemini API
-function getGeminiModel() {
+function getGeminiModel(modelName = 'gemini-3.5-flash') {
   const apiKey = process.env.GEMINI_API_KEY;
   if (!apiKey || apiKey.includes('your_gemini_api_key_here')) {
     console.warn('⚠️  WARNING: GEMINI_API_KEY is not configured or using placeholder in .env.');
@@ -69,9 +69,9 @@ function getGeminiModel() {
     return null;
   }
   const genAI = new GoogleGenerativeAI(apiKey);
-  // Using gemini-3.5-flash for fast and high-quality structured generation
+  console.log(`🤖 Instantiating model client: ${modelName}`);
   return genAI.getGenerativeModel({
-    model: 'gemini-3.5-flash',
+    model: modelName,
     generationConfig: {
       responseMimeType: 'application/json',
     }
@@ -285,9 +285,17 @@ async function main() {
             console.warn(`⚠️ Attempt ${attempts}/${maxAttempts} failed for Episode ${i}: ${e.message}`);
             
             if (e.message.includes('429') || e.message.includes('Quota exceeded') || e.message.includes('Too Many Requests')) {
-              console.log('⏳ Quota limit (429) hit. Sleeping for 35 seconds to let the rate limit window reset...');
-              await sleep(35000);
-              attempts--; // Do not count rate-limits as format retry attempts
+              // If it's a daily limit warning on gemini-3.5-flash, fall back immediately to gemini-2.0-flash
+              if ((e.message.includes('daily') || e.message.includes('limit: 20') || e.message.includes('GenerateRequestsPerDay')) && model.model.includes('gemini-3.5-flash')) {
+                console.log('🚨 Daily request limit reached for gemini-3.5-flash. Automatically falling back to gemini-2.0-flash (higher limits)...');
+                model = getGeminiModel('gemini-2.0-flash');
+                attempts--; // Don't count fallback as format retry attempt
+                await sleep(3000);
+              } else {
+                console.log('⏳ Quota limit (429) hit. Sleeping for 35 seconds to let the rate limit window reset...');
+                await sleep(35000);
+                attempts--; // Do not count rate-limits as format retry attempts
+              }
             } else {
               if (attempts >= maxAttempts) throw e;
               await sleep(2000); // Small cooldown before formatting retries
