@@ -24,6 +24,9 @@ function cleanAndParseJSON(text) {
   return JSON.parse(cleaned);
 }
 
+// Helper to sleep for millisecond intervals
+const sleep = (ms) => new Promise(resolve => setTimeout(resolve, ms));
+
 
 // Load environment variables
 dotenv.config();
@@ -273,11 +276,22 @@ async function main() {
             const result = await model.generateContent(epPrompt);
             const text = result.response.text();
             episodeScript = cleanAndParseJSON(text);
+            
+            // Add a small delay between requests to avoid rate limits
+            await sleep(3000);
             break;
           } catch (e) {
             attempts++;
-            console.warn(`⚠️ Attempt ${attempts}/${maxAttempts} failed to parse JSON for Episode ${i}: ${e.message}`);
-            if (attempts >= maxAttempts) throw e;
+            console.warn(`⚠️ Attempt ${attempts}/${maxAttempts} failed for Episode ${i}: ${e.message}`);
+            
+            if (e.message.includes('429') || e.message.includes('Quota exceeded') || e.message.includes('Too Many Requests')) {
+              console.log('⏳ Quota limit (429) hit. Sleeping for 35 seconds to let the rate limit window reset...');
+              await sleep(35000);
+              attempts--; // Do not count rate-limits as format retry attempts
+            } else {
+              if (attempts >= maxAttempts) throw e;
+              await sleep(2000); // Small cooldown before formatting retries
+            }
           }
         }
       } else {
